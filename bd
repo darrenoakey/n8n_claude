@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+from colorama import Fore, Style
+
+# add src to path so we can import our modules
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from n8n_client import N8nWorkflows, N8nOutput
+from git_helper import GitHelper
+
+
+# ##################################################################
+# print header
+# ensure headers are always cyan for visibility
+def print_header(text: str) -> None:
+    print(f"{Fore.CYAN}{text}{Style.RESET_ALL}")
+
+
+# ##################################################################
+# print success
+# ensure success messages are always green
+def print_success(text: str) -> None:
+    print(f"{Fore.GREEN}{text}{Style.RESET_ALL}")
+
+
+# ##################################################################
+# print error
+# ensure error messages are always red
+def print_error(text: str) -> None:
+    print(f"{Fore.RED}{text}{Style.RESET_ALL}", file=sys.stderr)
+
+
+# ##################################################################
+# command list
+# list all workflows from n8n instance
+def command_list(args: argparse.Namespace) -> int:
+    try:
+        print_header("Listing workflows...")
+        result = N8nWorkflows.list_workflows()
+        workflows = result.get("data", [])
+        output = N8nOutput.format_workflow_list(workflows)
+        print(output)
+        return 0
+    except Exception as err:
+        print_error(f"Failed to list workflows: {err}")
+        return 1
+
+
+# ##################################################################
+# command get
+# retrieve specific workflow by id
+def command_get(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        print_header(f"Getting workflow {workflow_id}...")
+        workflow = N8nWorkflows.get_workflow(workflow_id)
+        output = N8nOutput.format_workflow_detail(workflow)
+        print(output)
+        return 0
+    except Exception as err:
+        print_error(f"Failed to get workflow: {err}")
+        return 1
+
+
+# ##################################################################
+# command create
+# create new workflow from json file
+def command_create(args: argparse.Namespace) -> int:
+    try:
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print_error(f"File not found: {file_path}")
+            return 1
+
+        print_header(f"Creating workflow from {file_path}...")
+        with open(file_path, "r") as f:
+            workflow_data = json.load(f)
+
+        result = N8nWorkflows.create_workflow(workflow_data)
+        workflow_id = result.get("id", "unknown")
+        print_success(f"Created workflow: {workflow_id}")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to create workflow: {err}")
+        return 1
+
+
+# ##################################################################
+# command update
+# update existing workflow from json file or stdin
+def command_update(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+
+        if args.file:
+            file_path = Path(args.file)
+            if not file_path.exists():
+                print_error(f"File not found: {file_path}")
+                return 1
+            print_header(f"Updating workflow {workflow_id} from {file_path}...")
+            with open(file_path, "r") as f:
+                workflow_data = json.load(f)
+        else:
+            print_header(f"Reading workflow data from stdin...")
+            workflow_data = json.load(sys.stdin)
+
+        result = N8nWorkflows.update_workflow(workflow_id, workflow_data)
+        print_success(f"Updated workflow: {workflow_id}")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to update workflow: {err}")
+        return 1
+
+
+# ##################################################################
+# command delete
+# remove workflow by id
+def command_delete(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        print_header(f"Deleting workflow {workflow_id}...")
+        N8nWorkflows.delete_workflow(workflow_id)
+        print_success(f"Deleted workflow: {workflow_id}")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to delete workflow: {err}")
+        return 1
+
+
+# ##################################################################
+# command export
+# export workflow to json file
+def command_export(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        output_path = Path(args.output)
+
+        print_header(f"Exporting workflow {workflow_id} to {output_path}...")
+        workflow = N8nWorkflows.get_workflow(workflow_id)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(workflow, f, indent=2)
+
+        print_success(f"Exported workflow to: {output_path}")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to export workflow: {err}")
+        return 1
+
+
+# ##################################################################
+# command git before
+# commit current workflow state before making changes
+def command_git_before(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        workflow_name = args.name
+        description = args.description
+
+        print_header(f"Committing pre-change state for {workflow_name}...")
+        GitHelper.commit_before_change(workflow_id, workflow_name, description)
+        print_success(f"Committed pre-change state")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to commit pre-change state: {err}")
+        return 1
+
+
+# ##################################################################
+# command git after
+# commit updated workflow state after making changes
+def command_git_after(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        workflow_name = args.name
+        description = args.description
+
+        print_header(f"Committing post-change state for {workflow_name}...")
+        GitHelper.commit_after_change(workflow_id, workflow_name, description)
+        print_success(f"Committed post-change state")
+        return 0
+    except Exception as err:
+        print_error(f"Failed to commit post-change state: {err}")
+        return 1
+
+
+# ##################################################################
+# command git history
+# show git history for a workflow
+def command_git_history(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        limit = args.limit if hasattr(args, 'limit') else 10
+
+        print_header(f"Git history for workflow {workflow_id}...")
+        history = GitHelper.show_history(workflow_id, limit)
+        print(history)
+        return 0
+    except Exception as err:
+        print_error(f"Failed to show history: {err}")
+        return 1
+
+
+# ##################################################################
+# command git diff
+# show git diff for a workflow
+def command_git_diff(args: argparse.Namespace) -> int:
+    try:
+        workflow_id = args.id
+        from_ref = args.from_ref if hasattr(args, 'from_ref') and args.from_ref else "HEAD~1"
+        to_ref = args.to_ref if hasattr(args, 'to_ref') and args.to_ref else "HEAD"
+
+        print_header(f"Git diff for workflow {workflow_id} ({from_ref}..{to_ref})...")
+        diff = GitHelper.show_diff(workflow_id, from_ref, to_ref)
+        print(diff)
+        return 0
+    except Exception as err:
+        print_error(f"Failed to show diff: {err}")
+        return 1
+
+
+# ##################################################################
+# main
+# parse arguments and delegate to appropriate command handler
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="n8n workflow management CLI",
+        epilog="Use 'bd <command> -h' for help on a specific command"
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # list command
+    p_list = sub.add_parser("list", help="List all workflows")
+    p_list.set_defaults(func=command_list)
+
+    # get command
+    p_get = sub.add_parser("get", help="Get workflow by ID")
+    p_get.add_argument("id", help="Workflow ID")
+    p_get.set_defaults(func=command_get)
+
+    # create command
+    p_create = sub.add_parser("create", help="Create workflow from JSON file")
+    p_create.add_argument("file", help="Path to workflow JSON file")
+    p_create.set_defaults(func=command_create)
+
+    # update command
+    p_update = sub.add_parser("update", help="Update workflow from JSON file or stdin")
+    p_update.add_argument("id", help="Workflow ID")
+    p_update.add_argument("-f", "--file", help="Path to workflow JSON file (or use stdin)")
+    p_update.set_defaults(func=command_update)
+
+    # delete command
+    p_delete = sub.add_parser("delete", help="Delete workflow by ID")
+    p_delete.add_argument("id", help="Workflow ID")
+    p_delete.set_defaults(func=command_delete)
+
+    # export command
+    p_export = sub.add_parser("export", help="Export workflow to JSON file")
+    p_export.add_argument("id", help="Workflow ID")
+    p_export.add_argument("-o", "--output", required=True, help="Output file path")
+    p_export.set_defaults(func=command_export)
+
+    # git-before command
+    p_git_before = sub.add_parser("git-before", help="Commit workflow state before changes")
+    p_git_before.add_argument("id", help="Workflow ID")
+    p_git_before.add_argument("name", help="Workflow name")
+    p_git_before.add_argument("description", help="Change description")
+    p_git_before.set_defaults(func=command_git_before)
+
+    # git-after command
+    p_git_after = sub.add_parser("git-after", help="Commit workflow state after changes")
+    p_git_after.add_argument("id", help="Workflow ID")
+    p_git_after.add_argument("name", help="Workflow name")
+    p_git_after.add_argument("description", help="Change description")
+    p_git_after.set_defaults(func=command_git_after)
+
+    # git-history command
+    p_git_history = sub.add_parser("git-history", help="Show git history for workflow")
+    p_git_history.add_argument("id", help="Workflow ID")
+    p_git_history.add_argument("-n", "--limit", type=int, default=10, help="Number of commits to show")
+    p_git_history.set_defaults(func=command_git_history)
+
+    # git-diff command
+    p_git_diff = sub.add_parser("git-diff", help="Show git diff for workflow")
+    p_git_diff.add_argument("id", help="Workflow ID")
+    p_git_diff.add_argument("--from", dest="from_ref", default="HEAD~1", help="From ref (default: HEAD~1)")
+    p_git_diff.add_argument("--to", dest="to_ref", default="HEAD", help="To ref (default: HEAD)")
+    p_git_diff.set_defaults(func=command_git_diff)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+# ##################################################################
+# entry point
+# standard python pattern for dispatching main
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
